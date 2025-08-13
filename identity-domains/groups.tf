@@ -7,14 +7,17 @@ data "oci_identity_domain" "grp_domain" {
 }
 
 data "oci_identity_domains_users" "these" {
-  for_each = var.identity_domain_groups_configuration != null ? (var.identity_domain_groups_configuration.groups != null ? var.identity_domain_groups_configuration.groups : {} ): {}
-    idcs_endpoint = contains(keys(oci_identity_domain.these),coalesce(each.value.identity_domain_id,"None")) ? oci_identity_domain.these[each.value.identity_domain_id].url : (contains(keys(oci_identity_domain.these),coalesce(var.identity_domain_groups_configuration.default_identity_domain_id,"None") ) ? oci_identity_domain.these[var.identity_domain_groups_configuration.default_identity_domain_id].url : data.oci_identity_domain.grp_domain[each.key].url)
-    user_filter = "active eq true" # Only active users are looked up. 
+  for_each = local.identity_domains
+    idcs_endpoint = each.value[0]
+    user_filter = "active eq true"
 }
 
 locals {
+
+  identity_domains = merge({for k,g in try(var.identity_domain_groups_configuration.groups,{}) : coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id) => oci_identity_domain.these[coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id)].url... if g.members != null && length(regexall("^ocid1.*$",coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id))) == 0}, {for k,g in try(var.identity_domain_groups_configuration.groups,{}) : coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id) => data.oci_identity_domain.grp_domain[k].url... if g.members != null && length(regexall("^ocid1.*$",coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id))) > 0})
+
   users =  { for k,g in (var.identity_domain_groups_configuration != null ? var.identity_domain_groups_configuration["groups"]: {}) : k =>
-      { for u in data.oci_identity_domains_users.these[k].users : u.user_name => u.id}}
+      { for u in data.oci_identity_domains_users.these[coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id)].users : u.user_name => u.id... } if g.members != null }
 }
 
 resource "oci_identity_domains_group" "these" {
@@ -28,7 +31,6 @@ resource "oci_identity_domains_group" "these" {
     }
     #attribute_sets = ["all"]
     idcs_endpoint = contains(keys(oci_identity_domain.these),coalesce(each.value.identity_domain_id,"None")) ? oci_identity_domain.these[each.value.identity_domain_id].url : (contains(keys(oci_identity_domain.these),coalesce(var.identity_domain_groups_configuration.default_identity_domain_id,"None") ) ? oci_identity_domain.these[var.identity_domain_groups_configuration.default_identity_domain_id].url : data.oci_identity_domain.grp_domain[each.key].url)
-  
     display_name = each.value.name
     schemas = ["urn:ietf:params:scim:schemas:core:2.0:Group","urn:ietf:params:scim:schemas:oracle:idcs:extension:requestable:Group","urn:ietf:params:scim:schemas:oracle:idcs:extension:OCITags","urn:ietf:params:scim:schemas:oracle:idcs:extension:group:Group"]
     urnietfparamsscimschemasoracleidcsextensiongroup_group {
@@ -37,9 +39,10 @@ resource "oci_identity_domains_group" "these" {
     }
     dynamic "members" {
       for_each = each.value.members != null ? each.value.members : []
+        iterator = member
         content {
           type = "User"
-          value = local.users[each.key][members["value"]]
+          value = local.users[each.key][member.value][0]
         }
     }
     urnietfparamsscimschemasoracleidcsextension_oci_tags {
@@ -74,7 +77,6 @@ resource "oci_identity_domains_group" "these_with_external_membership_updates" {
     }
     #attribute_sets = ["all"]
     idcs_endpoint = contains(keys(oci_identity_domain.these),coalesce(each.value.identity_domain_id,"None")) ? oci_identity_domain.these[each.value.identity_domain_id].url : (contains(keys(oci_identity_domain.these),coalesce(var.identity_domain_groups_configuration.default_identity_domain_id,"None") ) ? oci_identity_domain.these[var.identity_domain_groups_configuration.default_identity_domain_id].url : data.oci_identity_domain.grp_domain[each.key].url)
-  
     display_name = each.value.name
     schemas = ["urn:ietf:params:scim:schemas:core:2.0:Group","urn:ietf:params:scim:schemas:oracle:idcs:extension:requestable:Group","urn:ietf:params:scim:schemas:oracle:idcs:extension:OCITags","urn:ietf:params:scim:schemas:oracle:idcs:extension:group:Group"]
     urnietfparamsscimschemasoracleidcsextensiongroup_group {
@@ -83,9 +85,10 @@ resource "oci_identity_domains_group" "these_with_external_membership_updates" {
     }
     dynamic "members" {
       for_each = each.value.members != null ? each.value.members : []
+        iterator = member
         content {
           type = "User"
-          value = local.users[each.key][members["value"]]
+          value = local.users[each.key][member.value][0]
         }
     }
     urnietfparamsscimschemasoracleidcsextension_oci_tags {
@@ -103,10 +106,6 @@ resource "oci_identity_domains_group" "these_with_external_membership_updates" {
           key = freeform_tags["key"]
           value = freeform_tags["value"]
         }
-      }
-      freeform_tags {
-        key = keys(local.cislz_module_tag)[0]
-        value = local.cislz_module_tag[keys(local.cislz_module_tag)[0]]
       }
     }
     urnietfparamsscimschemasoracleidcsextensionrequestable_group {
