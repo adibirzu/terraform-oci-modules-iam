@@ -14,10 +14,10 @@ data "oci_identity_domains_users" "these" {
 
 locals {
 
-  identity_domains = merge({for k,g in try(var.identity_domain_groups_configuration.groups,{}) : coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id) => oci_identity_domain.these[coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id)].url... if g.members != null && length(regexall("^ocid1.*$",coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id))) == 0}, {for k,g in try(var.identity_domain_groups_configuration.groups,{}) : coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id) => data.oci_identity_domain.grp_domain[k].url... if g.members != null && length(regexall("^ocid1.*$",coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id))) > 0})
+  identity_domains = merge({for k,g in try(var.identity_domain_groups_configuration.groups,{}) : coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id) => oci_identity_domain.these[coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id)].url... if length(g.members) > 0 && length(regexall("^ocid1.*$",coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id))) == 0}, {for k,g in try(var.identity_domain_groups_configuration.groups,{}) : coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id) => data.oci_identity_domain.grp_domain[k].url... if length(g.members) > 0 && length(regexall("^ocid1.*$",coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id))) > 0})
 
   users =  { for k,g in (var.identity_domain_groups_configuration != null ? var.identity_domain_groups_configuration["groups"]: {}) : k =>
-      { for u in data.oci_identity_domains_users.these[coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id)].users : u.user_name => u.id... } if g.members != null }
+      { for u in data.oci_identity_domains_users.these[coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id)].users : u.user_name => u.id... } if length(g.members) > 0 }
 }
 
 resource "oci_identity_domains_group" "these" {
@@ -25,8 +25,8 @@ resource "oci_identity_domains_group" "these" {
     lifecycle {
       ignore_changes = [ members ]
       precondition {
-        condition = each.value.members != null ? length(setsubtract(toset(each.value.members),toset([for m in each.value.members : m if contains(keys(local.users[each.key]),m)]))) == 0 : true
-        error_message = each.value.members != null ? "VALIDATION FAILURE: following provided usernames in \"members\" attribute of group \"${each.key}\" do not exist or are not active\": ${join(", ",setsubtract(toset(each.value.members),toset([for m in each.value.members : m if contains(keys(local.users[each.key]),m)])))}. Please either correct their spelling or activate them." : ""
+        condition = length(each.value.members) > 0 ? length(setsubtract(toset(each.value.members),toset([for m in each.value.members : m if contains(keys(local.users[each.key]),m)]))) == 0 : true
+        error_message = length(each.value.members) > 0 ? "VALIDATION FAILURE: following provided usernames in \"members\" attribute of group \"${each.key}\" do not exist or are not active\": ${join(", ",setsubtract(toset(each.value.members),toset([for m in each.value.members : m if contains(keys(local.users[each.key]),m)])))}. Please either correct their spelling or activate them." : ""
       }
     }
     #attribute_sets = ["all"]
@@ -38,7 +38,7 @@ resource "oci_identity_domains_group" "these" {
         description = each.value.description
     }
     dynamic "members" {
-      for_each = each.value.members != null ? each.value.members : []
+      for_each = length(each.value.members) > 0 ? each.value.members : []
         iterator = member
         content {
           type = "User"
@@ -71,8 +71,8 @@ resource "oci_identity_domains_group" "these_with_external_membership_updates" {
   for_each = var.identity_domain_groups_configuration != null ? (try(var.identity_domain_groups_configuration.ignore_external_membership_updates,true) == false ? var.identity_domain_groups_configuration.groups : {}) : {}
     lifecycle {
       precondition {
-        condition = each.value.members != null ? length(setsubtract(toset(each.value.members),toset([for m in each.value.members : m if contains(keys(local.users[each.key]),m)]))) == 0 : true
-        error_message = each.value.members != null ? "VALIDATION FAILURE: following provided usernames in \"members\" attribute of group \"${each.key}\" do not exist or are not active\": ${join(", ",setsubtract(toset(each.value.members),toset([for m in each.value.members : m if contains(keys(local.users[each.key]),m)])))}. Please either correct their spelling or activate them." : ""
+        condition = length(each.value.members) > 0 ? length(setsubtract(toset(each.value.members),toset([for m in each.value.members : m if contains(keys(local.users[each.key]),m)]))) == 0 : true
+        error_message = length(each.value.members) > 0 ? "VALIDATION FAILURE: following provided usernames in \"members\" attribute of group \"${each.key}\" do not exist or are not active\": ${join(", ",setsubtract(toset(each.value.members),toset([for m in each.value.members : m if contains(keys(local.users[each.key]),m)])))}. Please either correct their spelling or activate them." : ""
       }
     }
     #attribute_sets = ["all"]
@@ -84,7 +84,7 @@ resource "oci_identity_domains_group" "these_with_external_membership_updates" {
         description = each.value.description
     }
     dynamic "members" {
-      for_each = each.value.members != null ? each.value.members : []
+      for_each = length(each.value.members) > 0 ? each.value.members : []
         iterator = member
         content {
           type = "User"
