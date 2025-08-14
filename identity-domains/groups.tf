@@ -6,18 +6,26 @@ data "oci_identity_domain" "grp_domain" {
     domain_id = each.value.identity_domain_id != null ? each.value.identity_domain_id : var.identity_domain_groups_configuration.default_identity_domain_id
 }
 
+locals {
+  # Map of identity domains with all requested members
+  identity_domains_members = {for k,g in try(var.identity_domain_groups_configuration.groups,{}) : coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id) => g.members...}
+  # Map of identity domains with all requested members (flattened, dupes removed)
+  identity_domains_members_flattened = {for k, g in local.identity_domains_members : k => toset(flatten(g))}
+  # Map of identity domains with their respective endpoint URLs and requested members
+  identity_domains = merge({for k,g in try(var.identity_domain_groups_configuration.groups,{}) : coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id) => {"url" : oci_identity_domain.these[coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id)].url, "members" : local.identity_domains_members_flattened[coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id)]}... if length(g.members) > 0 && length(regexall("^ocid1.*$",coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id))) == 0}, {for k,g in try(var.identity_domain_groups_configuration.groups,{}) : coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id) => {"url" : data.oci_identity_domain.grp_domain[k].url, "members" : local.identity_domains_members_flattened[coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id)]}... if length(g.members) > 0 && length(regexall("^ocid1.*$",coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id))) > 0})
+}
+
+# Users lookup. Used to retrieve the user id attribute for requested members. The user id is used when granting group membership (see dynamic "members" block in resource "oci_identity_domains_group" "these").
 data "oci_identity_domains_users" "these" {
   for_each = local.identity_domains
-    idcs_endpoint = each.value[0]
-    user_filter = "active eq true"
+    idcs_endpoint = each.value[0].url
+    user_filter = "active eq true ${length(each.value[0].members) > 0 ? "and (userName eq \"${join("\" or userName eq \"", each.value[0].members)}\")" : ""}"
+    attributes  = "user_name,id"
 }
 
 locals {
-
-  identity_domains = merge({for k,g in try(var.identity_domain_groups_configuration.groups,{}) : coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id) => oci_identity_domain.these[coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id)].url... if length(g.members) > 0 && length(regexall("^ocid1.*$",coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id))) == 0}, {for k,g in try(var.identity_domain_groups_configuration.groups,{}) : coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id) => data.oci_identity_domain.grp_domain[k].url... if length(g.members) > 0 && length(regexall("^ocid1.*$",coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id))) > 0})
-
-  users =  { for k,g in (var.identity_domain_groups_configuration != null ? var.identity_domain_groups_configuration["groups"]: {}) : k =>
-      { for u in data.oci_identity_domains_users.these[coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id)].users : u.user_name => u.id... } if length(g.members) > 0 }
+  # Map of usernames with their respective retrieved user ids. The user id is used when granting group membership (see dynamic "members" block in resource "oci_identity_domains_group" "these).
+  users = { for k,g in try(var.identity_domain_groups_configuration.groups,{}) : k => { for u in data.oci_identity_domains_users.these[coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id)].users : u.user_name => u.id... } if length(g.members) > 0 }
 }
 
 resource "oci_identity_domains_group" "these" {
