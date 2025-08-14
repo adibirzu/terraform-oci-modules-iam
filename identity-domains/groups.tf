@@ -7,14 +7,17 @@ data "oci_identity_domain" "grp_domain" {
 }
 
 data "oci_identity_domains_users" "these" {
-  for_each = var.identity_domain_groups_configuration != null ? (var.identity_domain_groups_configuration.groups != null ? var.identity_domain_groups_configuration.groups : {} ): {}
-    idcs_endpoint = contains(keys(oci_identity_domain.these),coalesce(each.value.identity_domain_id,"None")) ? oci_identity_domain.these[each.value.identity_domain_id].url : (contains(keys(oci_identity_domain.these),coalesce(var.identity_domain_groups_configuration.default_identity_domain_id,"None") ) ? oci_identity_domain.these[var.identity_domain_groups_configuration.default_identity_domain_id].url : data.oci_identity_domain.grp_domain[each.key].url)
-    user_filter = "active eq true" # Only active users are looked up. 
+  for_each = local.identity_domains
+    idcs_endpoint = each.value[0]
+    user_filter = "active eq true"
 }
 
 locals {
+
+  identity_domains = merge({for k,g in try(var.identity_domain_groups_configuration.groups,{}) : coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id) => oci_identity_domain.these[coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id)].url... if length(g.members) > 0 && length(regexall("^ocid1.*$",coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id))) == 0}, {for k,g in try(var.identity_domain_groups_configuration.groups,{}) : coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id) => data.oci_identity_domain.grp_domain[k].url... if length(g.members) > 0 && length(regexall("^ocid1.*$",coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id))) > 0})
+
   users =  { for k,g in (var.identity_domain_groups_configuration != null ? var.identity_domain_groups_configuration["groups"]: {}) : k =>
-      { for u in data.oci_identity_domains_users.these[k].users : u.user_name => u.id}}
+      { for u in data.oci_identity_domains_users.these[coalesce(g.identity_domain_id,var.identity_domain_groups_configuration.default_identity_domain_id)].users : u.user_name => u.id... } if length(g.members) > 0 }
 }
 
 resource "oci_identity_domains_group" "these" {
@@ -22,13 +25,12 @@ resource "oci_identity_domains_group" "these" {
     lifecycle {
       ignore_changes = [ members ]
       precondition {
-        condition = each.value.members != null ? length(setsubtract(toset(each.value.members),toset([for m in each.value.members : m if contains(keys(local.users[each.key]),m)]))) == 0 : true
-        error_message = each.value.members != null ? "VALIDATION FAILURE: following provided usernames in \"members\" attribute of group \"${each.key}\" do not exist or are not active\": ${join(", ",setsubtract(toset(each.value.members),toset([for m in each.value.members : m if contains(keys(local.users[each.key]),m)])))}. Please either correct their spelling or activate them." : ""
+        condition = length(each.value.members) > 0 ? length(setsubtract(toset(each.value.members),toset([for m in each.value.members : m if contains(keys(local.users[each.key]),m)]))) == 0 : true
+        error_message = length(each.value.members) > 0 ? "VALIDATION FAILURE: following provided usernames in \"members\" attribute of group \"${each.key}\" do not exist or are not active\": ${join(", ",setsubtract(toset(each.value.members),toset([for m in each.value.members : m if contains(keys(local.users[each.key]),m)])))}. Please either correct their spelling or activate them." : ""
       }
     }
     #attribute_sets = ["all"]
     idcs_endpoint = contains(keys(oci_identity_domain.these),coalesce(each.value.identity_domain_id,"None")) ? oci_identity_domain.these[each.value.identity_domain_id].url : (contains(keys(oci_identity_domain.these),coalesce(var.identity_domain_groups_configuration.default_identity_domain_id,"None") ) ? oci_identity_domain.these[var.identity_domain_groups_configuration.default_identity_domain_id].url : data.oci_identity_domain.grp_domain[each.key].url)
-  
     display_name = each.value.name
     schemas = ["urn:ietf:params:scim:schemas:core:2.0:Group","urn:ietf:params:scim:schemas:oracle:idcs:extension:requestable:Group","urn:ietf:params:scim:schemas:oracle:idcs:extension:OCITags","urn:ietf:params:scim:schemas:oracle:idcs:extension:group:Group"]
     urnietfparamsscimschemasoracleidcsextensiongroup_group {
@@ -36,10 +38,11 @@ resource "oci_identity_domains_group" "these" {
         description = each.value.description
     }
     dynamic "members" {
-      for_each = each.value.members != null ? each.value.members : []
+      for_each = length(each.value.members) > 0 ? each.value.members : []
+        iterator = member
         content {
           type = "User"
-          value = local.users[each.key][members["value"]]
+          value = local.users[each.key][member.value][0]
         }
     }
     urnietfparamsscimschemasoracleidcsextension_oci_tags {
@@ -68,13 +71,12 @@ resource "oci_identity_domains_group" "these_with_external_membership_updates" {
   for_each = var.identity_domain_groups_configuration != null ? (try(var.identity_domain_groups_configuration.ignore_external_membership_updates,true) == false ? var.identity_domain_groups_configuration.groups : {}) : {}
     lifecycle {
       precondition {
-        condition = each.value.members != null ? length(setsubtract(toset(each.value.members),toset([for m in each.value.members : m if contains(keys(local.users[each.key]),m)]))) == 0 : true
-        error_message = each.value.members != null ? "VALIDATION FAILURE: following provided usernames in \"members\" attribute of group \"${each.key}\" do not exist or are not active\": ${join(", ",setsubtract(toset(each.value.members),toset([for m in each.value.members : m if contains(keys(local.users[each.key]),m)])))}. Please either correct their spelling or activate them." : ""
+        condition = length(each.value.members) > 0 ? length(setsubtract(toset(each.value.members),toset([for m in each.value.members : m if contains(keys(local.users[each.key]),m)]))) == 0 : true
+        error_message = length(each.value.members) > 0 ? "VALIDATION FAILURE: following provided usernames in \"members\" attribute of group \"${each.key}\" do not exist or are not active\": ${join(", ",setsubtract(toset(each.value.members),toset([for m in each.value.members : m if contains(keys(local.users[each.key]),m)])))}. Please either correct their spelling or activate them." : ""
       }
     }
     #attribute_sets = ["all"]
     idcs_endpoint = contains(keys(oci_identity_domain.these),coalesce(each.value.identity_domain_id,"None")) ? oci_identity_domain.these[each.value.identity_domain_id].url : (contains(keys(oci_identity_domain.these),coalesce(var.identity_domain_groups_configuration.default_identity_domain_id,"None") ) ? oci_identity_domain.these[var.identity_domain_groups_configuration.default_identity_domain_id].url : data.oci_identity_domain.grp_domain[each.key].url)
-  
     display_name = each.value.name
     schemas = ["urn:ietf:params:scim:schemas:core:2.0:Group","urn:ietf:params:scim:schemas:oracle:idcs:extension:requestable:Group","urn:ietf:params:scim:schemas:oracle:idcs:extension:OCITags","urn:ietf:params:scim:schemas:oracle:idcs:extension:group:Group"]
     urnietfparamsscimschemasoracleidcsextensiongroup_group {
@@ -82,10 +84,11 @@ resource "oci_identity_domains_group" "these_with_external_membership_updates" {
         description = each.value.description
     }
     dynamic "members" {
-      for_each = each.value.members != null ? each.value.members : []
+      for_each = length(each.value.members) > 0 ? each.value.members : []
+        iterator = member
         content {
           type = "User"
-          value = local.users[each.key][members["value"]]
+          value = local.users[each.key][member.value][0]
         }
     }
     urnietfparamsscimschemasoracleidcsextension_oci_tags {
@@ -103,10 +106,6 @@ resource "oci_identity_domains_group" "these_with_external_membership_updates" {
           key = freeform_tags["key"]
           value = freeform_tags["value"]
         }
-      }
-      freeform_tags {
-        key = keys(local.cislz_module_tag)[0]
-        value = local.cislz_module_tag[keys(local.cislz_module_tag)[0]]
       }
     }
     urnietfparamsscimschemasoracleidcsextensionrequestable_group {
