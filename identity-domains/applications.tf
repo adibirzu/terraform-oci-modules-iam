@@ -6,7 +6,7 @@ data "oci_identity_domain" "apps_domain" {
 }
 
 data "oci_identity_domain" "service_provider_domain" {
-  for_each = local.target_sps
+   for_each = local.target_sps
     domain_id = each.value
 }
 
