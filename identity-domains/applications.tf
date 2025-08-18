@@ -6,14 +6,14 @@ data "oci_identity_domain" "apps_domain" {
 }
 
 data "oci_identity_domain" "service_provider_domain" {
-  for_each  = local.target_sps
+   for_each  = local.target_sps
   domain_id = each.value
 }
 
 data "http" "sp_signing_cert" {
-  for_each = local.target_sps
+   for_each = local.target_sps
   # url = join("",[data.oci_identity_domain.service_provider_domain[each.key].url,local.sign_cert_uri])
-  url = join("", contains(keys(oci_identity_domain.these), coalesce(each.value, "None")) ? [oci_identity_domain.these[each.value].url] : [data.oci_identity_domain.service_provider_domain[each.key].url], [local.sign_cert_uri])
+   url = join("", contains(keys(oci_identity_domain.these), coalesce(each.value, "None")) ? [oci_identity_domain.these[each.value].url] : [data.oci_identity_domain.service_provider_domain[each.key].url], [local.sign_cert_uri])
   depends_on = [
     oci_identity_domains_setting.cert_public_access_setting
   ]
