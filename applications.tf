@@ -5,7 +5,7 @@ data "oci_identity_domain" "apps_domain" {
     domain_id = each.value.identity_domain_id != null ? each.value.identity_domain_id : var.identity_domain_applications_configuration.default_identity_domain_id
 }
 
-data "oci_identity_domain" "service_provider_domain" {
+  data "oci_identity_domain" "service_provider_domain" {
    for_each = local.target_sps
       domain_id = each.value
 }
